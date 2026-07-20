@@ -1,6 +1,8 @@
 using Newtonsoft.Json;
 using OpenQA.Selenium;
+using OpenQA.Selenium.BiDi.BrowsingContext;
 using OpenQA.Selenium.Chrome;
+using OpenQA.Selenium.Firefox;
 
 using OpenQA.Selenium.Support.UI;
 using System.Collections.ObjectModel;
@@ -618,7 +620,7 @@ return buildSubTree(arguments[0], '');
 
     /// <summary>
     /// ダウンロードフォルダを変更する。
-    /// Chrome 起動中は CDP 経由でリアルタイム変更。未起動なら次回起動時に適用。
+    /// Chrome 起動中は CDP 経由でリアルタイム変更。Firefox は起動時にのみ適用。未起動なら次回起動時に適用。
     /// </summary>
     /// <param name="path">絶対パスのフォルダ</param>
     public void SetDownloadDir(string path)
@@ -910,10 +912,10 @@ return buildSubTree(arguments[0], '');
             var info = LoadWebdriverInfo()
                 ?? throw new InvalidOperationException("webinfo.json が見つからない、または解析できません。");
 
-            if (!File.Exists(info.Chrome))
+            if (!File.Exists(info.Browser))
             {
-                Logger.Log($"Chrome 実行体が見つからない: {info.Chrome}", LogType.System);
-                throw new FileNotFoundException($"Chrome 実行体が見つからない: {info.Chrome}");
+                Logger.Log($"{info.BrowserType} 実行体が見つからない: {info.Browser}", LogType.System);
+                throw new FileNotFoundException($"{info.BrowserType} 実行体が見つからない: {info.Browser}");
             }
             if (!File.Exists(info.WebDriver))
             {
@@ -925,51 +927,99 @@ return buildSubTree(arguments[0], '');
             if (string.IsNullOrEmpty(_downloadDir) && !string.IsNullOrEmpty(info.Download))
                 _downloadDir = info.Download;
 
-            var service = ChromeDriverService.CreateDefaultService(
-                Path.GetDirectoryName(info.WebDriver)!,
-                Path.GetFileName(info.WebDriver));
-
-            var options = new ChromeOptions { BinaryLocation = info.Chrome };
-            info.Args.ForEach(a => options.AddArgument(a));
-
-            // ダウンロードフォルダが設定されていれば Chrome 起動時に適用
-            if (!string.IsNullOrEmpty(_downloadDir))
+            switch (info.BrowserType.ToLowerInvariant())
             {
-                if (!Directory.Exists(_downloadDir))
-                    Directory.CreateDirectory(_downloadDir);
-
-                options.AddUserProfilePreference("download.default_directory", _downloadDir);
-                options.AddUserProfilePreference("download.prompt_for_download", false);
-                options.AddUserProfilePreference("download.directory_upgrade", true);
-                options.AddUserProfilePreference("safebrowsing.enabled", false);
+                case "firefox":
+                    BuildFirefoxBrowser(info);
+                    break;
+                case "chrome":
+                default:
+                    BuildChromeBrowser(info);
+                    break;
             }
 
-            _driver = new ChromeDriver(service, options);
-            _wait = new WebDriverWait(_driver, TimeSpan.FromMinutes(2));
-            Logger.Log($"Chrome started. chrome={info.Chrome}", LogType.System);
-
-            // AddUserProfilePreference より既存プロファイルの保存値が優先されるため、
-            // 起動直後に CDP で強制上書きする。
-            if (!string.IsNullOrEmpty(_downloadDir) && _driver is ChromeDriver chromeForDl)
-            {
-                chromeForDl.ExecuteCdpCommand(
-                    "Browser.setDownloadBehavior",
-                    new Dictionary<string, object?>
-                    {
-                    { "behavior", "allow" },
-                    { "downloadPath", _downloadDir },
-                    { "eventsEnabled", false },
-                    });
-            }
 
             // 自動アタッチ用の初期スナップショット
             _previousHandles = _driver.WindowHandles.ToArray();
         }
         catch (Exception ex)
         {
-            Logger.Log($"Failed to start Chrome: {ex.Message}", LogType.System);
+            Logger.Log($"Failed to start browser: {ex.Message}", LogType.System);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Chrome用
+    /// </summary>
+    /// <param name="info"></param>
+    private void BuildChromeBrowser( WebdriverInfo info )
+    {
+        var service = ChromeDriverService.CreateDefaultService(
+            Path.GetDirectoryName(info.WebDriver)!,
+            Path.GetFileName(info.WebDriver));
+
+        var options = new ChromeOptions { BinaryLocation = info.Browser };
+        info.Args.ForEach(a => options.AddArgument(a));
+
+        // ダウンロードフォルダが設定されていれば Chrome 起動時に適用
+        if (!string.IsNullOrEmpty(_downloadDir))
+        {
+            if (!Directory.Exists(_downloadDir))
+                Directory.CreateDirectory(_downloadDir);
+
+            options.AddUserProfilePreference("download.default_directory", _downloadDir);
+            options.AddUserProfilePreference("download.prompt_for_download", false);
+            options.AddUserProfilePreference("download.directory_upgrade", true);
+            options.AddUserProfilePreference("safebrowsing.enabled", false);
+        }
+
+        _driver = new ChromeDriver(service, options);
+        _wait = new WebDriverWait(_driver, TimeSpan.FromMinutes(2));
+        Logger.Log($"Chrome started. chrome={info.Browser}", LogType.System);
+
+        // AddUserProfilePreference より既存プロファイルの保存値が優先されるため、
+        // 起動直後に CDP で強制上書きする。
+        if (!string.IsNullOrEmpty(_downloadDir) && _driver is ChromeDriver chromeForDl)
+        {
+            chromeForDl.ExecuteCdpCommand(
+                "Browser.setDownloadBehavior",
+                new Dictionary<string, object?>
+                {
+                    { "behavior", "allow" },
+                    { "downloadPath", _downloadDir },
+                    { "eventsEnabled", false },
+                });
+        }
+    }
+
+    /// <summary>
+    /// Firefox用
+    /// </summary>
+    /// <param name="info"></param>
+    private void BuildFirefoxBrowser( WebdriverInfo info )
+    {
+        var service = FirefoxDriverService.CreateDefaultService(
+            Path.GetDirectoryName(info.WebDriver)!,
+            Path.GetFileName(info.WebDriver));
+
+        var options = new FirefoxOptions { BinaryLocation = info.Browser };
+        info.Args.ForEach(a => options.AddArgument(a));
+
+        if (!string.IsNullOrEmpty(_downloadDir))
+        {
+            if (!Directory.Exists(_downloadDir))
+                Directory.CreateDirectory(_downloadDir);
+
+            options.SetPreference("browser.download.dir", _downloadDir);
+            options.SetPreference("browser.download.folderList", 2);
+            options.SetPreference("browser.helperApps.neverAsk.saveToDisk", "");
+            options.SetPreference("browser.download.manager.showWhenStarting", false);
+        }
+
+        _driver = new FirefoxDriver(service, options);
+        _wait = new WebDriverWait(_driver, TimeSpan.FromMinutes(2));
+        Logger.Log($"Firefox started. firefox={info.Browser}", LogType.System);
     }
 
     /// <summary>

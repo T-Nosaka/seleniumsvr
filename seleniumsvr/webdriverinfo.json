@@ -1,5 +1,6 @@
 {
-  "Chrome": "C:\\webdriver\\chrome-win64\\chrome.exe",
+  "BrowserType": "chrome",
+  "Browser": "C:\\webdriver\\chrome-win64\\chrome.exe",
   "WebDriver": "C:\\webdriver\\chromedriver-win64\\chromedriver.exe",
   "Download": "C:\\webdriver\\download",
   "Args": [

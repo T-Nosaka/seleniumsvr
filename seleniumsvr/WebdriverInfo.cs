@@ -7,9 +7,14 @@ namespace seleniumsvr
     public class WebdriverInfo
     {
         /// <summary>
-        /// Chrome実行体
+        /// ブラウザ種別 ("chrome" or "firefox")
         /// </summary>
-        public string Chrome = @"C:\webdriver\chrome-win64\chrome.exe";
+        public string BrowserType = "chrome";
+
+        /// <summary>
+        /// Browser実行体
+        /// </summary>
+        public string Browser = @"C:\webdriver\chrome-win64\chrome.exe";
 
         /// <summary>
         /// WebDriver実行体
