@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
+
 using OpenQA.Selenium.Support.UI;
 using System.Collections.ObjectModel;
 
@@ -46,7 +47,7 @@ public sealed class BrowserSession : IDisposable
     private readonly object _gate = new();
 
     /// <summary>WebDriver本体。未起動時はnull</summary>
-    private ChromeDriver? _driver;
+    private WebDriver? _driver;
 
     /// <summary>待機用WebDriverWait。_driverと同じライフサイクル</summary>
     private WebDriverWait? _wait;
@@ -631,9 +632,9 @@ return buildSubTree(arguments[0], '');
                 Directory.CreateDirectory(_downloadDir);
 
             // Chrome 起動中なら CDP でリアルタイム変更
-            if (_driver != null)
+            if (_driver is ChromeDriver chromeDriver)
             {
-                _driver.ExecuteCdpCommand(
+                chromeDriver.ExecuteCdpCommand(
                     "Browser.setDownloadBehavior",
                     new Dictionary<string, object?>
                     {
@@ -949,9 +950,9 @@ return buildSubTree(arguments[0], '');
 
             // AddUserProfilePreference より既存プロファイルの保存値が優先されるため、
             // 起動直後に CDP で強制上書きする。
-            if (!string.IsNullOrEmpty(_downloadDir))
+            if (!string.IsNullOrEmpty(_downloadDir) && _driver is ChromeDriver chromeForDl)
             {
-                _driver.ExecuteCdpCommand(
+                chromeForDl.ExecuteCdpCommand(
                     "Browser.setDownloadBehavior",
                     new Dictionary<string, object?>
                     {
