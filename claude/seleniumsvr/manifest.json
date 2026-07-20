@@ -1,0 +1,30 @@
+{
+  "manifest_version": "0.2",
+  "name": "seleniumsvr",
+  "version": "1.0.0",
+  "description": "local chrome browser control mcp server",
+  "author": {
+    "name": "T.Nosaka"
+  },
+  "user_config": {
+    "webdriverinfo": {
+      "type": "string",
+      "title": "webdriverinfo.json path",
+      "description": "required webdriverinfo.json path",
+      "sensitive": false,
+      "required": true
+    }
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "win-x64/seleniumsvr.exe",
+    "mcp_config": {
+      "command": "${__dirname}/win-x64/seleniumsvr.exe",
+      "args": [
+        "--webdriverinfo",
+        "${user_config.webdriverinfo}"
+      ]
+    }
+  },
+  "license": "MIT"
+}
