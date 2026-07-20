@@ -78,7 +78,7 @@ mcpb pack
     "seleniumsvr": {
       "type": "local",
       "command": [
-        "/mnt/d/platform/vs/seleniumsvr/seleniumsvr/bin/Release/net10.0-windows/seleniumsvr.exe",
+        "/mnt/c/webdriver/seleniumsvr.exe",
         "--webdriverinfo",
         "C:\\webdriver\\webdriverinfo.json"
       ],
