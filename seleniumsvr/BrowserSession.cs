@@ -1,6 +1,5 @@
 using Newtonsoft.Json;
 using OpenQA.Selenium;
-using OpenQA.Selenium.BiDi.BrowsingContext;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Firefox;
 
@@ -31,8 +30,8 @@ public enum SelectorType
 public sealed record WindowInfo(string Handle, string Title, string Url, bool IsCurrent);
 
 /// <summary>
-/// Chrome / WebDriver のセッションをプロセス寿命で管理するシングルトン。
-/// - 初回 Navigate 呼び出しで Chrome を起動（遅延初期化）
+/// Browser / WebDriver のセッションをプロセス寿命で管理するシングルトン。
+/// - 初回 Navigate 呼び出しで Browser を起動（遅延初期化）
 /// - Close で Quit、続く Navigate で再起動可能
 /// - プロセス終了時に Dispose で確実に Quit
 /// - Selenium WebDriver は非スレッドセーフなので全操作はロックで直列化
@@ -68,7 +67,7 @@ public sealed class BrowserSession : IDisposable
     /// <summary>
     /// 指定URLへ遷移。ブラウザ未起動なら自動で起動する。
     /// Chrome ウィンドウが手動で閉じられるなどセッションが死亡した場合は
-    /// ドライバをリセットして Chrome を再起動し、自動復旧する。
+    /// ドライバをリセットして Browser を再起動し、自動復旧する。
     /// </summary>
     /// <param name="url">絶対URL（http/https）</param>
     /// <returns>遷移後のタイトルと最終URL</returns>
@@ -87,8 +86,8 @@ public sealed class BrowserSession : IDisposable
             catch (WebDriverException ex)
             {
                 // セッション死亡時（ブラウザを手動で閉じた場合など）は
-                // ドライバをリセットして Chrome を再起動してリトライ
-                Logger.Log($"Session lost, restarting Chrome. ({ex.Message})", LogType.System);
+                // ドライバをリセットして Browser を再起動してリトライ
+                Logger.Log($"Session lost, restarting Browser. ({ex.Message})", LogType.System);
                 ResetSessionLocked();
                 EnsureStartedLocked();
                 _driver!.Navigate().GoToUrl(url);
@@ -620,7 +619,7 @@ return buildSubTree(arguments[0], '');
 
     /// <summary>
     /// ダウンロードフォルダを変更する。
-    /// Chrome 起動中は CDP 経由でリアルタイム変更。Firefox は起動時にのみ適用。未起動なら次回起動時に適用。
+    /// Browser 起動中は CDP 経由でリアルタイム変更。Firefox は起動時にのみ適用。未起動なら次回起動時に適用。
     /// </summary>
     /// <param name="path">絶対パスのフォルダ</param>
     public void SetDownloadDir(string path)
@@ -800,7 +799,7 @@ return buildSubTree(arguments[0], '');
 
     /// <summary>
     /// ドライバを破棄してセッションをリセットする（ロック取得済み前提）。
-    /// Chrome が予期せず終了した場合の復旧に使用する。
+    /// Browser が予期せず終了した場合の復旧に使用する。
     /// </summary>
     private void ResetSessionLocked()
     {
@@ -1025,7 +1024,7 @@ return buildSubTree(arguments[0], '');
     /// <summary>
     /// 自アセンブリと同じフォルダの webdriverinfo.json を読み込む。
     /// </summary>
-    /// <returns>ChromeInfo。ファイルがなければnull</returns>
+    /// <returns>WebdriverInfo。ファイルがなければnull</returns>
     private static WebdriverInfo? LoadWebdriverInfo()
     {
         Logger.Log($"LoadWebdriverInfo", LogType.System);
@@ -1041,7 +1040,7 @@ return buildSubTree(arguments[0], '');
     }
 
     /// <summary>
-    /// 破棄処理。ChromeDriverを確実にQuitする
+    /// 破棄処理。
     /// </summary>
     public void Dispose()
     {
