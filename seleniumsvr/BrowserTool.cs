@@ -24,12 +24,12 @@ public sealed class BrowserTool
     }
 
     /// <summary>
-    /// 指定URLへ遷移（未起動時はChromeを自動起動）
+    /// 指定URLへ遷移（未起動時はBrowserを自動起動）
     /// </summary>
     /// <param name="url">絶対URL</param>
     /// <returns>タイトルと最終URL、またはエラー文字列</returns>
     [McpServerTool(Name = "navigate"),
-     Description("Open an absolute URL in Chrome. Launches Chrome if needed. Always use navigate as the first step, then screenshot to verify page loaded, then get_page_text or get_current_url to confirm you're on the right page. After navigation, use find_element to locate and click links, or input_text to fill forms. Returns page title and final URL after redirects.")]
+     Description("Open an absolute URL in Browser. Launches Browser if needed. Always use navigate as the first step, then screenshot to verify page loaded, then get_page_text or get_current_url to confirm you're on the right page. After navigation, use find_element to locate and click links, or input_text to fill forms. Returns page title and final URL after redirects.")]
     public string Navigate(
         [Description("Absolute URL to navigate to (e.g. https://www.example.com/). Must start with http:// or https://.")]
         string url)
@@ -95,7 +95,7 @@ public sealed class BrowserTool
     /// </summary>
     /// <returns>完了メッセージ、またはエラー文字列</returns>
     [McpServerTool(Name = "close_browser"),
-     Description("Quit Chrome and reset the session completely. Use when you need a clean fresh start, finished with automation, or to clear all cookies/cache. The next navigate call will launch a fresh Chrome instance. Use close_browser between completely different tasks to ensure no state carries over.")]
+     Description("Quit Browser and reset the session completely. Use when you need a clean fresh start, finished with automation, or to clear all cookies/cache. The next navigate call will launch a fresh Browser instance. Use close_browser between completely different tasks to ensure no state carries over.")]
     public string CloseBrowser()
     {
         try

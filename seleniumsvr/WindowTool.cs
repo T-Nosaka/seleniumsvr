@@ -64,7 +64,7 @@ public sealed class WindowTool
     /// </summary>
     /// <returns>結果メッセージ</returns>
     [McpServerTool(Name = "close_window"),
-     Description("Close the current window or tab and automatically switch to another. Use when you need to close popups or unwanted windows after clicking links. Cannot close the last remaining window - use close_browser if you want to fully close Chrome. After closing, screenshot to verify which window you're now on.")]
+     Description("Close the current window or tab and automatically switch to another. Use when you need to close popups or unwanted windows after clicking links. Cannot close the last remaining window - use close_browser if you want to fully close Browser. After closing, screenshot to verify which window you're now on.")]
     public string CloseWindow()
     {
         try

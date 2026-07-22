@@ -6,6 +6,9 @@ seleniumsvr/bin/
 seleniumsvr/obj/
 seleniumsvr/logs/
 
+claude/seleniumsvr/seleniumsvr.mcpb
+claude/seleniumsvr/win-x64
+
 # User-specific files
 seleniumsvr/seleniumsvr.csproj.user
 seleniumsvr/seleniumsvr.csproj.lscache

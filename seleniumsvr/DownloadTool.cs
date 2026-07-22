@@ -5,7 +5,7 @@ namespace seleniumsvr;
 
 /// <summary>
 /// ダウンロードファイル制御系 MCP ツール。
-/// Chrome 起動前はフォルダを記憶し、起動時に ChromeOptions で適用する。
+/// Browser 起動前はフォルダを記憶し、起動時に Options で適用する。
 /// 起動後の変更は CDP（Browser.setDownloadBehavior）でリアルタイム反映する。
 /// </summary>
 [McpServerToolType]
@@ -29,7 +29,7 @@ public sealed class DownloadTool
     /// <param name="path">絶対パスのフォルダ（存在しない場合は自動作成）</param>
     /// <returns>設定されたフォルダパス、またはエラー文字列</returns>
     [McpServerTool(Name = "set_download_dir"),
-     Description("Set where Chrome will save downloaded files. Call this before clicking download buttons or links. Works even if Chrome is already running. Create a specific folder for your downloads, then set_download_dir, find and click the download button, then wait_for_download to confirm the file arrived.")]
+     Description("Set where Browser will save downloaded files. Call this before clicking download buttons or links. Works even if Browser is already running. Create a specific folder for your downloads, then set_download_dir, find and click the download button, then wait_for_download to confirm the file arrived.")]
     public string SetDownloadDir(
         [Description("Absolute path of the folder to save downloads (e.g. C:\\Users\\me\\Downloads).")]
         string path)
