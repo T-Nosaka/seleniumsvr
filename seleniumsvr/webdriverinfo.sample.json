@@ -1,0 +1,42 @@
+{
+  "Browsers": {
+    "default": {
+      "BrowserType": "chrome",
+      "Browser": "C:\\webdriver\\chrome-win64\\chrome.exe",
+      "WebDriver": "C:\\webdriver\\chromedriver-win64\\chromedriver.exe",
+      "Download": "C:\\webdriver\\download",
+      "Args": [
+        "--user-data-dir=C:\\webdriver\\profile\\default"
+      ]
+    },
+    "second": {
+      "BrowserType": "chrome",
+      "Browser": "C:\\webdriver\\chrome-win64\\chrome.exe",
+      "WebDriver": "C:\\webdriver\\chromedriver-win64\\chromedriver.exe",
+      "Download": "C:\\webdriver\\download",
+      "Args": [
+        "--user-data-dir=C:\\webdriver\\profile\\second"
+      ]
+    },
+    "firefox-default": {
+      "BrowserType": "firefox",
+      "Browser": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+      "WebDriver": "C:\\webdriver\\geckodriver\\geckodriver.exe",
+      "Download": "C:\\webdriver\\download",
+      "Args": [
+        "-profile",
+        "C:\\webdriver\\profile\\firefox1"
+      ]
+    },
+    "firefox-second": {
+      "BrowserType": "firefox",
+      "Browser": "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+      "WebDriver": "C:\\webdriver\\geckodriver\\geckodriver.exe",
+      "Download": "C:\\webdriver\\download",
+      "Args": [
+        "-profile",
+        "C:\\webdriver\\profile\\firefox2"
+      ]
+    }
+  }
+}

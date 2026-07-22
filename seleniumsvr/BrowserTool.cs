@@ -1,4 +1,4 @@
-using ModelContextProtocol.Server;
+﻿using ModelContextProtocol.Server;
 using System.ComponentModel;
 
 namespace seleniumsvr;
@@ -21,6 +21,57 @@ public sealed class BrowserTool
     public BrowserTool(BrowserSession session)
     {
         _session = session;
+    }
+
+    /// <summary>
+    /// 利用可能なブラウザ定義の一覧を返す。
+    /// </summary>
+    /// <returns>定義名・種別・プロファイルパスの一覧、またはエラー文字列</returns>
+    [McpServerTool(Name = "list_browser"),
+     Description("List the available browser definitions (names) configured in webdriverinfo.json, with each definition's browser type and profile path. The current selection is marked with '*'. Use this to discover which profile name to pass to prepare_browser.")]
+    public string ListBrowser()
+    {
+        try { return _session.ListBrowsers(); }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// ブラウザを準備する（宣言的 acquire）。定義名でプロファイルを選び、排他ロックを取得する。
+    /// </summary>
+    /// <param name="profile">ブラウザ定義名（list_browser で確認）。省略時は "default"</param>
+    /// <returns>結果メッセージ、またはエラー文字列</returns>
+    [McpServerTool(Name = "prepare_browser"),
+     Description("Acquire and prepare a browser for this session. Pass a browser definition name from list_browser (e.g. a profile that already holds the target site's cookies); omit to use 'default'. This launches the browser and takes an exclusive lock on its profile, so the SAME profile cannot be driven by two sessions at once. If already prepared with the same profile this is a no-op; if a different profile is active, release_browser must be called first. Call this before navigate when you need a specific profile.")]
+    public string PrepareBrowser(
+        [Description("Browser definition name from list_browser. Omit for 'default'.")]
+        string? profile = null)
+    {
+        try { return _session.Prepare(profile); }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// ブラウザを終了し、プロファイルロックを解放する（宣言的 release）。
+    /// </summary>
+    /// <returns>結果メッセージ、またはエラー文字列</returns>
+    [McpServerTool(Name = "release_browser"),
+     Description("Release the browser prepared by prepare_browser: quit it and free the exclusive profile lock so another session can use that profile. Recommended when you are done so the profile is freed promptly, but not strictly required - the lock is always released automatically when the server process exits.")]
+    public string ReleaseBrowser()
+    {
+        try { return _session.Release(); }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// 現在のセッション状態（起動有無・選択プロファイル・ロック状態・現在URL）を返す。
+    /// </summary>
+    /// <returns>状態文字列、またはエラー文字列</returns>
+    [McpServerTool(Name = "session_status"),
+     Description("Report the current session state: whether a browser is prepared, which profile definition is selected, its browser type and profile path, whether the profile lock is held, and the current page title/URL. Use to check what this session is driving before acting.")]
+    public string SessionStatus()
+    {
+        try { return _session.GetStatus(); }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
     }
 
     /// <summary>

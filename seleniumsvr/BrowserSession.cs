@@ -1,4 +1,5 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Firefox;
@@ -61,6 +62,12 @@ public sealed class BrowserSession : IDisposable
     /// 操作後に新しい window が増えていれば自動で切替える（自動アタッチ）。
     /// </summary>
     private string[] _previousHandles = Array.Empty<string>();
+
+    /// <summary>プロファイル排他ロック用ファイルストリーム。未取得時はnull</summary>
+    private FileStream? _profileLock;
+
+    /// <summary>現在選択中のブラウザ定義名。未prepare時はnull</summary>
+    private string? _selectedName;
 
     // ---------- ライフサイクル / ナビゲーション ----------
 
@@ -147,7 +154,7 @@ public sealed class BrowserSession : IDisposable
     }
 
     /// <summary>
-    /// ブラウザを終了してセッションをリセットする
+    /// ブラウザを終了してセッションをリセットする。プロファイルロックも解放する。
     /// </summary>
     public void Close()
     {
@@ -157,6 +164,122 @@ public sealed class BrowserSession : IDisposable
             _driver?.Dispose();
             _driver = null;
             _wait = null;
+            ReleaseProfileLockLocked();
+        }
+    }
+
+    /// <summary>
+    /// ブラウザを準備する（宣言的 acquire）。
+    /// 指定した定義名のブラウザ/プロファイルでセッションを構成し、永続プロファイルなら排他ロックを取得する。
+    /// すでに同名で準備済みなら no-op。別名で起動中なら例外（先に release が必要）。
+    /// </summary>
+    /// <param name="name">ブラウザ定義名。null/空なら "default"</param>
+    /// <returns>結果メッセージ</returns>
+    public string Prepare(string? name)
+    {
+        lock (_gate)
+        {
+            var target = string.IsNullOrWhiteSpace(name) ? "default" : name!.Trim();
+
+            if (_driver != null)
+            {
+                if (string.Equals(_selectedName, target, StringComparison.OrdinalIgnoreCase))
+                    return $"already prepared: {_selectedName}";
+                throw new InvalidOperationException(
+                    $"別のプロファイル '{_selectedName}' で起動中です。先に release_browser を呼んでください。");
+            }
+
+            var previous = _selectedName;
+            _selectedName = target;
+            try
+            {
+                EnsureStartedLocked();
+            }
+            catch
+            {
+                _selectedName = previous;  // 失敗時は選択状態を戻す
+                throw;
+            }
+            return $"prepared: {_selectedName}";
+        }
+    }
+
+    /// <summary>
+    /// ブラウザを終了し、プロファイルロックを解放して選択状態をクリアする（宣言的 release）。
+    /// best-effort。呼ばれなくてもプロセス終了時に Dispose で必ず解放される。
+    /// </summary>
+    /// <returns>結果メッセージ</returns>
+    public string Release()
+    {
+        lock (_gate)
+        {
+            var was = _selectedName;
+            try { _driver?.Quit(); } catch { /* best-effort */ }
+            _driver?.Dispose();
+            _driver = null;
+            _wait = null;
+            ReleaseProfileLockLocked();
+            _selectedName = null;
+            _previousHandles = Array.Empty<string>();
+            return was == null ? "no active session." : $"released: {was}";
+        }
+    }
+
+    /// <summary>
+    /// 現在のセッション状態を返す（起動有無・選択プロファイル・ロック状態・現在URL等）。
+    /// </summary>
+    /// <returns>状態文字列</returns>
+    public string GetStatus()
+    {
+        lock (_gate)
+        {
+            var running = _driver != null;
+            var name = _selectedName ?? "(none)";
+            string btype = "(unknown)";
+            string profile = "(none)";
+            try
+            {
+                var info = ResolveInfo(_selectedName ?? "default");
+                btype = info.BrowserType;
+                profile = ExtractProfilePath(info) ?? "(ephemeral)";
+            }
+            catch { /* 定義が無い場合はそのまま */ }
+
+            string title = "-", url = "-";
+            if (running)
+            {
+                try { title = _driver!.Title; url = _driver.Url; } catch { /* セッション不安定時 */ }
+            }
+
+            return
+                $"prepared: {running}\n" +
+                $"profile_name: {name}\n" +
+                $"browser_type: {btype}\n" +
+                $"profile_path: {profile}\n" +
+                $"profile_locked: {_profileLock != null}\n" +
+                $"current_title: {title}\n" +
+                $"current_url: {url}";
+        }
+    }
+
+    /// <summary>
+    /// 利用可能なブラウザ定義の一覧を返す。
+    /// </summary>
+    /// <returns>定義名・種別・プロファイルパスの一覧（現在選択中は * 付き）</returns>
+    public string ListBrowsers()
+    {
+        lock (_gate)
+        {
+            var all = LoadAllBrowsers();
+            if (all.Count == 0) return "(no browser definitions found)";
+
+            var lines = all.Select(kv =>
+            {
+                var pth = ExtractProfilePath(kv.Value) ?? "(ephemeral)";
+                var cur = string.Equals(kv.Key, _selectedName, StringComparison.OrdinalIgnoreCase) ? " *" : "";
+                return $"{kv.Key}{cur}\ttype={kv.Value.BrowserType}\tprofile={pth}";
+            });
+            return string.Join("\n", lines);
         }
     }
 
@@ -807,6 +930,7 @@ return buildSubTree(arguments[0], '');
         _driver = null;
         _wait = null;
         _previousHandles = Array.Empty<string>();
+        ReleaseProfileLockLocked();
     }
 
     /// <summary>
@@ -908,8 +1032,10 @@ return buildSubTree(arguments[0], '');
 
         try
         {
-            var info = LoadWebdriverInfo()
-                ?? throw new InvalidOperationException("webinfo.json が見つからない、または解析できません。");
+            var name = _selectedName ?? "default";
+            _selectedName = name;
+
+            var info = ResolveInfo(name);
 
             if (!File.Exists(info.Browser))
             {
@@ -926,6 +1052,9 @@ return buildSubTree(arguments[0], '');
             if (string.IsNullOrEmpty(_downloadDir) && !string.IsNullOrEmpty(info.Download))
                 _downloadDir = info.Download;
 
+            // 永続プロファイル利用時はプロセス間で排他ロックを取得（同時操作を防止）
+            AcquireProfileLockLocked(ExtractProfilePath(info));
+
             switch (info.BrowserType.ToLowerInvariant())
             {
                 case "firefox":
@@ -939,10 +1068,12 @@ return buildSubTree(arguments[0], '');
 
 
             // 自動アタッチ用の初期スナップショット
-            _previousHandles = _driver.WindowHandles.ToArray();
+            _previousHandles = _driver!.WindowHandles.ToArray();
         }
         catch (Exception ex)
         {
+            // 起動失敗時はプロファイルロックを手放す
+            ReleaseProfileLockLocked();
             Logger.Log($"Failed to start browser: {ex.Message}", LogType.System);
             throw;
         }
@@ -1022,21 +1153,108 @@ return buildSubTree(arguments[0], '');
     }
 
     /// <summary>
-    /// 自アセンブリと同じフォルダの webdriverinfo.json を読み込む。
+    /// 選択名に対応するブラウザ定義を解決する。存在しなければ例外。
     /// </summary>
-    /// <returns>WebdriverInfo。ファイルがなければnull</returns>
-    private static WebdriverInfo? LoadWebdriverInfo()
+    private static WebdriverInfo ResolveInfo(string name)
     {
-        Logger.Log($"LoadWebdriverInfo", LogType.System);
+        var all = LoadAllBrowsers();
+        if (all.Count == 0)
+            throw new InvalidOperationException("webdriverinfo.json が見つからない、または解析できません。");
+        if (all.TryGetValue(name, out var info))
+            return info;
+        throw new InvalidOperationException(
+            $"ブラウザ定義 '{name}' が存在しません。利用可能: {string.Join(", ", all.Keys)}");
+    }
+
+    /// <summary>
+    /// 設定ファイルを読み込み、名前付きブラウザ定義の辞書を返す。
+    /// 新形式 {"Browsers":{"name":{...}}} と、旧形式（フラット単一定義=default）の両対応。
+    /// </summary>
+    private static Dictionary<string, WebdriverInfo> LoadAllBrowsers()
+    {
+        Logger.Log($"LoadAllBrowsers", LogType.System);
 
         var fullpath = !string.IsNullOrEmpty(webdriverinfopath)
             ? webdriverinfopath
             : Path.Combine(AppContext.BaseDirectory, "webdriverinfo.json");
 
-        if (!File.Exists(fullpath)) return null;
-        var text = File.ReadAllText(fullpath);
+        if (!File.Exists(fullpath))
+            return new(StringComparer.OrdinalIgnoreCase);
 
-        return JsonConvert.DeserializeObject<WebdriverInfo>(text);
+        var text = File.ReadAllText(fullpath);
+        var root = JObject.Parse(text);
+
+        // 新形式: 名前付き複数定義
+        if (root["Browsers"] != null)
+        {
+            var cfg = root.ToObject<WebdriverConfig>();
+            var dict = new Dictionary<string, WebdriverInfo>(StringComparer.OrdinalIgnoreCase);
+            if (cfg?.Browsers != null)
+                foreach (var kv in cfg.Browsers)
+                    dict[kv.Key] = kv.Value;
+            return dict;
+        }
+
+        // 旧形式: フラット単一定義 → "default" として後方互換
+        var flat = root.ToObject<WebdriverInfo>();
+        var single = new Dictionary<string, WebdriverInfo>(StringComparer.OrdinalIgnoreCase);
+        if (flat != null) single["default"] = flat;
+        return single;
+    }
+
+    /// <summary>
+    /// ブラウザ定義から永続プロファイルのパスを抽出する。指定が無ければ null（一時プロファイル）。
+    /// Chrome: --user-data-dir=PATH / Firefox: -profile PATH または -profile=PATH
+    /// </summary>
+    private static string? ExtractProfilePath(WebdriverInfo info)
+    {
+        var args = info.Args;
+        for (int i = 0; i < args.Count; i++)
+        {
+            var a = args[i];
+            if (a.StartsWith("--user-data-dir=", StringComparison.OrdinalIgnoreCase))
+                return Path.GetFullPath(a["--user-data-dir=".Length..]);
+            if (a.StartsWith("-profile=", StringComparison.OrdinalIgnoreCase))
+                return Path.GetFullPath(a["-profile=".Length..]);
+            if (string.Equals(a, "-profile", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Count)
+                return Path.GetFullPath(args[i + 1]);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 永続プロファイルの排他ロックを取得する（ロック取得済み前提）。
+    /// プロファイル配下のロックファイルを FileShare.None で掴み、プロセス寿命の間保持する。
+    /// 他プロセスが同じプロファイルを掴んでいれば例外。
+    /// </summary>
+    private void AcquireProfileLockLocked(string? profilePath)
+    {
+        if (string.IsNullOrEmpty(profilePath))
+            return;  // 一時プロファイルは排他不要
+
+        Directory.CreateDirectory(profilePath);
+        var lockFile = Path.Combine(profilePath, ".seleniumsvr.lock");
+        try
+        {
+            _profileLock = new FileStream(
+                lockFile, FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException)
+        {
+            throw new InvalidOperationException(
+                $"プロファイル '{profilePath}' は別のセッションが使用中です。" +
+                "同一プロファイルの同時操作はできません。既存セッションの終了後に再実行してください。");
+        }
+    }
+
+    /// <summary>
+    /// プロファイルの排他ロックを解放する（ロック取得済み前提）。
+    /// </summary>
+    private void ReleaseProfileLockLocked()
+    {
+        try { _profileLock?.Dispose(); } catch { /* best-effort */ }
+        _profileLock = null;
     }
 
     /// <summary>
@@ -1050,6 +1268,7 @@ return buildSubTree(arguments[0], '');
             _driver?.Dispose();
             _driver = null;
             _wait = null;
+            ReleaseProfileLockLocked();
         }
     }
 }

@@ -1,8 +1,8 @@
 {
   "manifest_version": "0.2",
   "name": "seleniumsvr",
-  "version": "1.0.0",
-  "description": "local chrome browser control mcp server",
+  "version": "1.0.1",
+  "description": "local selenium browser control mcp server",
   "author": {
     "name": "T.Nosaka"
   },
