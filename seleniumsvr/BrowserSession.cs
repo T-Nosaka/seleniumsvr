@@ -22,6 +22,24 @@ public enum SelectorType
 }
 
 /// <summary>
+/// iframe/frame の指定方法。MCPツール側では文字列として露出する。
+/// </summary>
+public enum FrameTarget
+{
+    /// <summary>CSSセレクタで iframe 要素を指定</summary>
+    Css,
+
+    /// <summary>XPath で iframe 要素を指定</summary>
+    Xpath,
+
+    /// <summary>フレームのインデックス（0始まり）で指定</summary>
+    Index,
+
+    /// <summary>iframe の id または name 属性で指定</summary>
+    IdOrName,
+}
+
+/// <summary>
 /// ブラウザの window/tab の情報。
 /// </summary>
 /// <param name="Handle">Selenium 内部の window ハンドル（switch_window で指定）</param>
@@ -735,6 +753,177 @@ return buildSubTree(arguments[0], '');
                 string s => s,
                 _        => JsonConvert.SerializeObject(result),
             };
+        }
+    }
+
+    // ---------- フレーム (iframe) ----------
+
+    /// <summary>
+    /// 現在のフレームコンテキスト内の iframe/frame を列挙する（JSON文字列）。
+    /// </summary>
+    public string ListFrames()
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            var js = (IJavaScriptExecutor)_driver!;
+            const string script = @"
+var frames = document.querySelectorAll('iframe, frame');
+var out = [];
+for (var i = 0; i < frames.length; i++) {
+  var f = frames[i];
+  var info = { index: i, id: f.id || '', name: f.name || '', src: f.src || '', sameOrigin: false, textLength: 0 };
+  try {
+    var doc = f.contentDocument || (f.contentWindow && f.contentWindow.document);
+    if (doc) { info.sameOrigin = true; info.textLength = doc.body ? doc.body.innerText.length : 0; }
+  } catch (e) { info.sameOrigin = false; }
+  out.push(info);
+}
+return JSON.stringify(out, null, 2);";
+            return js.ExecuteScript(script) as string ?? "[]";
+        }
+    }
+
+    /// <summary>
+    /// 指定した iframe/frame にコンテキストを切り替える。
+    /// 以降の find/click/input/get_page_text 等はそのフレーム内を対象とする。
+    /// navigate を行うと自動的にトップ文書へ戻る。
+    /// </summary>
+    public void SwitchToFrame(string selector, FrameTarget by)
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            switch (by)
+            {
+                case FrameTarget.Index:
+                    if (!int.TryParse(selector, out var idx))
+                        throw new ArgumentException($"index として解釈できません: '{selector}'");
+                    _driver!.SwitchTo().Frame(idx);
+                    break;
+                case FrameTarget.IdOrName:
+                    _driver!.SwitchTo().Frame(selector);
+                    break;
+                case FrameTarget.Xpath:
+                    _driver!.SwitchTo().Frame(_driver.FindElement(By.XPath(selector)));
+                    break;
+                case FrameTarget.Css:
+                default:
+                    _driver!.SwitchTo().Frame(_driver.FindElement(By.CssSelector(selector)));
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 一つ上の親フレームにコンテキストを戻す。
+    /// </summary>
+    public void SwitchToParentFrame()
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            _driver!.SwitchTo().ParentFrame();
+        }
+    }
+
+    /// <summary>
+    /// トップ文書（default content）にコンテキストを戻す。
+    /// </summary>
+    public void SwitchToDefaultContent()
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            _driver!.SwitchTo().DefaultContent();
+        }
+    }
+
+    /// <summary>
+    /// トップ文書から全 iframe/frame を実際に切り替えながら再帰的に可視テキストを収集する。
+    /// WebDriver レベルで切り替えるためクロスオリジン iframe の内部テキストも取得できる。
+    /// 収集後はトップ文書にコンテキストを戻す。
+    /// </summary>
+    public string GetAllText(int maxDepth)
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            var sb = new System.Text.StringBuilder();
+            _driver!.SwitchTo().DefaultContent();
+            try
+            {
+                CollectFrameTextLocked(sb, "TOP", Math.Max(1, maxDepth));
+            }
+            finally
+            {
+                try { _driver.SwitchTo().DefaultContent(); } catch { }
+            }
+            return sb.ToString();
+        }
+    }
+
+    /// <summary>
+    /// GetAllText の再帰本体（ロック取得済み前提）。
+    /// </summary>
+    private void CollectFrameTextLocked(System.Text.StringBuilder sb, string path, int depth)
+    {
+        var js = (IJavaScriptExecutor)_driver!;
+
+        string bodyText;
+        try { bodyText = js.ExecuteScript("return document.body ? document.body.innerText : '';") as string ?? ""; }
+        catch { bodyText = ""; }
+        bodyText = bodyText.Trim();
+        if (bodyText.Length > 0)
+        {
+            sb.Append("===== [").Append(path).Append("] =====").Append('\n');
+            sb.Append(bodyText).Append('\n');
+        }
+
+        if (depth <= 0) return;
+
+        int frameCount;
+        try { frameCount = Convert.ToInt32(js.ExecuteScript("return window.frames.length;")); }
+        catch { frameCount = 0; }
+        if (frameCount == 0) return;
+
+        var labels = new List<string>();
+        try
+        {
+            var labelJson = js.ExecuteScript(@"
+var fr = document.querySelectorAll('iframe, frame');
+var out = [];
+for (var i = 0; i < fr.length; i++) {
+  var f = fr[i];
+  out.push(f.id ? ('#'+f.id) : (f.name ? ('name='+f.name) : ''));
+}
+return JSON.stringify(out);") as string ?? "[]";
+            labels = JsonConvert.DeserializeObject<List<string>>(labelJson) ?? new List<string>();
+        }
+        catch { }
+
+        for (int i = 0; i < frameCount; i++)
+        {
+            var lbl = (i < labels.Count && !string.IsNullOrEmpty(labels[i])) ? labels[i] : $"[{i}]";
+            var childPath = $"{path} > iframe{lbl}";
+            try
+            {
+                _driver!.SwitchTo().Frame(i);
+            }
+            catch (Exception ex)
+            {
+                sb.Append("===== [").Append(childPath).Append("] (切替失敗: ")
+                  .Append(ex.GetType().Name).Append(") =====").Append('\n');
+                continue;
+            }
+            try
+            {
+                CollectFrameTextLocked(sb, childPath, depth - 1);
+            }
+            finally
+            {
+                try { _driver!.SwitchTo().ParentFrame(); } catch { }
+            }
         }
     }
 
