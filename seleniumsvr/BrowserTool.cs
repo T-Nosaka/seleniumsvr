@@ -44,7 +44,7 @@ public sealed class BrowserTool
      Description("Acquire and prepare a browser for this session. Pass a browser definition name from list_browser (e.g. a profile that already holds the target site's cookies); omit to use 'default'. This launches the browser and takes an exclusive lock on its profile, so the SAME profile cannot be driven by two sessions at once. If already prepared with the same profile this is a no-op; if a different profile is active, release_browser must be called first. Call this before navigate when you need a specific profile.")]
     public string PrepareBrowser(
         [Description("Browser definition name from list_browser. Omit for 'default'.")]
-        string? profile = null)
+        string profile = "")
     {
         try { return _session.Prepare(profile); }
         catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }

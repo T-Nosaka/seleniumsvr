@@ -2,6 +2,7 @@
 
 Selenium WebDriver をラップした **MCP (Model Context Protocol) サーバー** です。
 Claude Desktop などの MCP クライアントから Chrome / Firefox ブラウザを操作できるようにします。
+Windows / macOS / Linux のクロスプラットフォームに対応しています。
 
 ## Features
 
@@ -18,7 +19,7 @@ Claude Desktop などの MCP クライアントから Chrome / Firefox ブラウ
 ## Requirements
 
 - .NET 10.0 SDK
-- Windows
+- **OS**: Windows / macOS (Apple Silicon / Intel) / Linux
 - **Chrome 使用時**: Google Chrome + ChromeDriver (Chrome バージョンに一致)
 - **Firefox 使用時**: Mozilla Firefox + [GeckoDriver](https://github.com/mozilla/geckodriver/releases)
 
@@ -30,15 +31,22 @@ Claude Desktop などの MCP クライアントから Chrome / Firefox ブラウ
 [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/) から
 Chrome と ChromeDriver をダウンロードし、任意のフォルダに配置します。
 
+- **Windows**: `chrome-win64/chrome.exe` + `chromedriver-win64/chromedriver.exe`
+- **macOS (Apple Silicon)**: `chrome-mac-arm64/Google Chrome for Testing.app` + `chromedriver-mac-arm64/chromedriver`
+- **macOS (Intel)**: `chrome-mac-x64/Google Chrome for Testing.app` + `chromedriver-mac-x64/chromedriver`
+- **Linux**: `chrome-linux64/chrome` + `chromedriver-linux64/chromedriver`
+
 **Firefox の場合:**
 [Mozilla Firefox](https://www.mozilla.org/firefox/) と
 [GeckoDriver](https://github.com/mozilla/geckodriver/releases) をダウンロードし、任意のフォルダに配置します。
 
 ### 2. 設定ファイル
 
-`seleniumsvr/webdriverinfo.json` を作成・編集します。
+`webdriverinfo.json` を作成・編集します。
 **名前付きで複数のブラウザ定義**を持てる形式です。`Browsers` の下に任意の名前で定義を並べ、
 `prepare_browser` の `profile` 引数でどれを使うかを選びます（省略時は `default`）。
+
+**Windows の場合:**
 
 ```json
 {
@@ -68,6 +76,29 @@ Chrome と ChromeDriver をダウンロードし、任意のフォルダに配�
 }
 ```
 
+**macOS の場合:**
+
+```json
+{
+  "Browsers": {
+    "default": {
+      "BrowserType": "chrome",
+      "Browser": "/Users/<username>/webdriver/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+      "WebDriver": "/Users/<username>/webdriver/chromedriver-mac-arm64/chromedriver",
+      "Download": "/Users/<username>/Downloads",
+      "Args": ["--user-data-dir=/Users/<username>/webdriver/profile/default"]
+    },
+    "firefox": {
+      "BrowserType": "firefox",
+      "Browser": "/Applications/Firefox.app/Contents/MacOS/firefox",
+      "WebDriver": "/usr/local/bin/geckodriver",
+      "Download": "/Users/<username>/Downloads",
+      "Args": ["-profile", "/Users/<username>/webdriver/profile/firefox"]
+    }
+  }
+}
+```
+
 各定義のフィールド:
 
 | Field | 説明 |
@@ -90,7 +121,27 @@ Chrome と ChromeDriver をダウンロードし、任意のフォルダに配�
 dotnet build seleniumsvr/seleniumsvr.csproj
 ```
 
-### 4. MCP Bundle（mcpb）の作成
+### 4. 単体実行体の生成（Publish）
+
+自己完結型（Self-contained）の単体実行体を生成します。.NET ランタイム不要で実行可能です。
+
+```bash
+# macOS (Apple Silicon)
+dotnet publish seleniumsvr/seleniumsvr.csproj -c Release -r osx-arm64 --self-contained true /p:PublishSingleFile=true
+
+# macOS (Intel)
+dotnet publish seleniumsvr/seleniumsvr.csproj -c Release -r osx-x64 --self-contained true /p:PublishSingleFile=true
+
+# Windows
+dotnet publish seleniumsvr/seleniumsvr.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+
+# Linux
+dotnet publish seleniumsvr/seleniumsvr.csproj -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true
+```
+
+出力は `seleniumsvr/bin/Release/net10.0/<RID>/publish/` に生成されます。
+
+### 5. MCP Bundle（mcpb）の作成
 
 リリースビルドしたバイナリと `manifest.json` を以下の構成で配置し、`mcpb pack` でバンドルファイルを作成します。
 
@@ -98,6 +149,8 @@ dotnet build seleniumsvr/seleniumsvr.csproj
 seleniumsvr
        |- win-x64
        |       |- seleniumsvr.exe
+       |- osx-arm64
+       |       |- seleniumsvr
        |- manifest.json
 ```
 
@@ -105,9 +158,11 @@ seleniumsvr
 mcpb pack
 ```
 
-### 5. OpenCode への登録（WSL 環境例）
+### 6. OpenCode への登録
 
-`~/.config/opencode/opencode.jsonc`:
+`~/.config/opencode/opencode.jsonc` に以下を追加します。
+
+**macOS の場合:**
 
 ```jsonc
 {
@@ -116,7 +171,26 @@ mcpb pack
     "seleniumsvr": {
       "type": "local",
       "command": [
-        "/mnt/c/webdriver/seleniumsvr.exe",
+        "/Users/<username>/webdriver/seleniumsvr",
+        "--webdriverinfo",
+        "/Users/<username>/webdriver/webdriverinfo.json"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Windows の場合:**
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "seleniumsvr": {
+      "type": "local",
+      "command": [
+        "C:\\webdriver\\seleniumsvr.exe",
         "--webdriverinfo",
         "C:\\webdriver\\webdriverinfo.json"
       ],
@@ -129,8 +203,8 @@ mcpb pack
 ## Architecture
 
 ```
-┌─────────────────┐     stdio JSON-RPC      ┌──────────────────────┐
-│  MCP Client     │ ◄─────────────────────► │  seleniumsvr         │
+┌─────────────────┐     stdio JSON-RPC       ┌──────────────────────┐
+│  MCP Client     │ ◄─────────────────────►  │  seleniumsvr         │
 │  (Claude etc.)  │                          │  (MCP Server)        │
 └─────────────────┘                          │                      │
                                              │  ┌────────────────┐  │

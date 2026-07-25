@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 
 namespace seleniumsvr
 {
@@ -6,6 +7,9 @@ namespace seleniumsvr
     /// </summary>
     public class WebdriverInfo
     {
+        private static readonly bool IsMacOS = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+        private static readonly bool IsLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
+
         /// <summary>
         /// ブラウザ種別 ("chrome" or "firefox")
         /// </summary>
@@ -14,17 +18,29 @@ namespace seleniumsvr
         /// <summary>
         /// Browser実行体
         /// </summary>
-        public string Browser = @"C:\webdriver\chrome-win64\chrome.exe";
+        public string Browser = IsMacOS
+            ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            : IsLinux
+                ? "/usr/bin/google-chrome"
+                : @"C:\webdriver\chrome-win64\chrome.exe";
 
         /// <summary>
         /// WebDriver実行体
         /// </summary>
-        public string WebDriver = @"C:\webdriver\chromedriver-win64\chromedriver.exe";
+        public string WebDriver = IsMacOS
+            ? "/usr/local/bin/chromedriver"
+            : IsLinux
+                ? "/usr/bin/chromedriver"
+                : @"C:\webdriver\chromedriver-win64\chromedriver.exe";
 
         /// <summary>
         /// ダウンロードフォルダ
         /// </summary>
-        public string Download = @"C:\webdriver\download";
+        public string Download = IsMacOS
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")
+            : IsLinux
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")
+                : @"C:\webdriver\download";
 
         /// <summary>
         /// オプション引数

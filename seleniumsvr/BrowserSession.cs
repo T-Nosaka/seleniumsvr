@@ -193,7 +193,7 @@ public sealed class BrowserSession : IDisposable
     /// </summary>
     /// <param name="name">ブラウザ定義名。null/空なら "default"</param>
     /// <returns>結果メッセージ</returns>
-    public string Prepare(string? name)
+    public string Prepare(string name)
     {
         lock (_gate)
         {

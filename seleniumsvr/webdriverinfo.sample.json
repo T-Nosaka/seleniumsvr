@@ -37,6 +37,28 @@
         "-profile",
         "C:\\webdriver\\profile\\firefox2"
       ]
+    },
+
+    "_comment_macos": "=== macOS 用サンプル ===",
+
+    "mac-default": {
+      "BrowserType": "chrome",
+      "Browser": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "WebDriver": "/usr/local/bin/chromedriver",
+      "Download": "/Users/<username>/Downloads",
+      "Args": [
+        "--user-data-dir=/Users/<username>/webdriver/profile/default"
+      ]
+    },
+    "mac-firefox": {
+      "BrowserType": "firefox",
+      "Browser": "/Applications/Firefox.app/Contents/MacOS/firefox",
+      "WebDriver": "/usr/local/bin/geckodriver",
+      "Download": "/Users/<username>/Downloads",
+      "Args": [
+        "-profile",
+        "/Users/<username>/webdriver/profile/firefox1"
+      ]
     }
   }
 }
