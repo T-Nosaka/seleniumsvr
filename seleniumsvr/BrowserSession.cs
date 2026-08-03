@@ -3,6 +3,7 @@ using Newtonsoft.Json.Linq;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Firefox;
+using OpenQA.Selenium.Interactions;
 
 using OpenQA.Selenium.Support.UI;
 using System.Collections.ObjectModel;
@@ -628,6 +629,79 @@ return buildSubTree(arguments[0], '');
     }
 
     /// <summary>
+    /// セレクタ一致要素に対してマウス操作を実行する（click / doubleclick / rightclick / hover）
+    /// </summary>
+    /// <param name="selector">セレクタ文字列</param>
+    /// <param name="by">セレクタ種別</param>
+    /// <param name="action">実行するアクション（click/doubleclick/rightclick/hover、大文字小文字区別なし）</param>
+    public void Interact(string selector, SelectorType by, string action)
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            var el = FindLocked(selector, by);
+            var actions = new Actions(_driver!);
+            switch (action.Trim().ToLowerInvariant())
+            {
+                case "click":
+                    actions.MoveToElement(el).Click().Perform();
+                    break;
+                case "doubleclick":
+                    actions.MoveToElement(el).DoubleClick().Perform();
+                    break;
+                case "rightclick":
+                    actions.MoveToElement(el).ContextClick().Perform();
+                    break;
+                case "hover":
+                    actions.MoveToElement(el).Perform();
+                    break;
+                default:
+                    throw new ArgumentException(
+                        $"未知の action です: '{action}'. 'click' / 'doubleclick' / 'rightclick' / 'hover' のいずれかを指定してください。");
+            }
+            AutoAttachLocked();
+        }
+    }
+
+    /// <summary>
+    /// キーボードのキーを1つ押下する。現在フォーカスされている要素に対して送信される。
+    /// </summary>
+    /// <param name="key">
+    /// キー名。OpenQA.Selenium.Keys のフィールド名（例: Enter, Tab, Escape, ArrowDown, Backspace）に
+    /// 大文字小文字を区別せず一致すればそのキーコードを使用し、一致しなければ入力文字列としてそのまま送信する。
+    /// </param>
+    public void PressKey(string key)
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            var resolved = ResolveKey(key);
+            new Actions(_driver!).SendKeys(resolved).Perform();
+        }
+    }
+
+    /// <summary>
+    /// キー名文字列を Selenium の Keys 定数、またはリテラル文字列へ解決する。
+    /// </summary>
+    /// <param name="key">キー名、または送信したい文字そのもの</param>
+    /// <returns>SendKeys に渡すべき文字列</returns>
+    private static string ResolveKey(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+            throw new ArgumentException("key is empty.", nameof(key));
+
+        var field = typeof(Keys).GetField(
+            key,
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.IgnoreCase);
+
+        if (field != null && field.GetValue(null) is string mapped)
+            return mapped;
+
+        // 特殊キー名に一致しなければ、そのままの文字列（1文字含む）として送信する
+        return key;
+    }
+
+    /// <summary>
     /// セレクタ一致要素にテキストを入力
     /// </summary>
     /// <param name="selector">セレクタ文字列</param>
@@ -729,6 +803,62 @@ return buildSubTree(arguments[0], '');
             catch (WebDriverTimeoutException)
             {
                 return false;
+            }
+        }
+    }
+
+    // ---------- アラート / confirm / prompt ----------
+
+    /// <summary>
+    /// ブラウザの alert / confirm / prompt ダイアログを処理する。
+    /// ダイアログはクリック等の操作直後に非同期で出現するため、出現をポーリング待機してから操作する。
+    /// </summary>
+    /// <param name="action">'accept' / 'dismiss' / 'get_text' / 'send_text'</param>
+    /// <param name="text">'send_text' の場合に入力するテキスト</param>
+    /// <param name="timeoutSeconds">ダイアログ出現待ちのタイムアウト秒数</param>
+    /// <returns>action に応じた結果文字列</returns>
+    public string HandleAlert(string action, string? text, int timeoutSeconds)
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+
+            var wait = new WebDriverWait(_driver!, TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)));
+            IAlert alert;
+            try
+            {
+                alert = wait.Until(d =>
+                {
+                    try { return d.SwitchTo().Alert(); }
+                    catch (NoAlertPresentException) { return null; }
+                });
+            }
+            catch (WebDriverTimeoutException)
+            {
+                throw new InvalidOperationException(
+                    "指定時間内に alert/confirm/prompt が出現しませんでした。");
+            }
+
+            switch (action.Trim().ToLowerInvariant())
+            {
+                case "accept":
+                    alert.Accept();
+                    AutoAttachLocked();
+                    return "accepted.";
+                case "dismiss":
+                    alert.Dismiss();
+                    AutoAttachLocked();
+                    return "dismissed.";
+                case "get_text":
+                    return alert.Text ?? string.Empty;
+                case "send_text":
+                    if (string.IsNullOrEmpty(text))
+                        throw new ArgumentException("send_text には text の指定が必要です。", nameof(text));
+                    alert.SendKeys(text);
+                    return "text sent.";
+                default:
+                    throw new ArgumentException(
+                        $"未知の action です: '{action}'. 'accept' / 'dismiss' / 'get_text' / 'send_text' のいずれかを指定してください。");
             }
         }
     }

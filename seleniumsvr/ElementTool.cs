@@ -289,6 +289,54 @@ public sealed class ElementTool
     }
 
     /// <summary>
+    /// セレクタ一致要素へのマウス操作（click/doubleclick/rightclick/hover）
+    /// </summary>
+    /// <param name="selector">セレクタ文字列</param>
+    /// <param name="action">実行するアクション</param>
+    /// <param name="by">セレクタ種別（Css / Xpath）</param>
+    /// <returns>完了メッセージ、またはエラー文字列</returns>
+    [McpServerTool(Name = "interact"),
+     Description("Performs a mouse action on an element: click, doubleclick, rightclick, or hover. Use this instead of the plain 'click' tool when you need a double-click, a right-click (to open a context menu), or a hover (to trigger tooltips/dropdown menus). Requires the exact selector.")]
+    public string Interact(
+        [Description("Selector string. Interpreted per 'by'. CSS by default (e.g. '#menu-item').")]
+        string selector,
+        [Description("Action to perform: 'click', 'doubleclick', 'rightclick', or 'hover'.")]
+        string action,
+        [Description("Selector type: 'Css' (default) or 'Xpath'.")]
+        SelectorType by = SelectorType.Css)
+    {
+        Logger.Log($"Interact [{action}] [{selector}] [{by}]", LogType.Operation);
+
+        try
+        {
+            _session.Interact(selector, by, action);
+            return $"{action} performed.";
+        }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// キーボードのキーを1つ押下する
+    /// </summary>
+    /// <param name="key">押下するキー名（特殊キー名 または 1文字）</param>
+    /// <returns>完了メッセージ、またはエラー文字列</returns>
+    [McpServerTool(Name = "press_key"),
+     Description("Presses a keyboard key, sent to the currently focused element on the page. Special key names match OpenQA.Selenium.Keys field names (e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown', 'ArrowUp', 'Backspace', 'Delete', 'Space'). Any other value (e.g. 'a') is sent as a literal character. Useful after input_text to submit a form with Enter, or to navigate menus with arrow keys.")]
+    public string PressKey(
+        [Description("Key to press (e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown', or a single character like 'a').")]
+        string key)
+    {
+        Logger.Log($"PressKey [{key}]", LogType.Operation);
+
+        try
+        {
+            _session.PressKey(key);
+            return "key pressed.";
+        }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
     /// セレクタ一致要素にテキストを入力
     /// </summary>
     /// <param name="selector">セレクタ文字列</param>
@@ -314,6 +362,89 @@ public sealed class ElementTool
         {
             _session.InputText(selector, by, text, clear);
             return "input sent.";
+        }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// セレクタ一致要素の可視テキストを取得
+    /// </summary>
+    /// <param name="selector">セレクタ文字列</param>
+    /// <param name="by">セレクタ種別（Css / Xpath）</param>
+    /// <returns>要素の可視テキスト、またはエラー文字列</returns>
+    [McpServerTool(Name = "get_element_text"),
+     Description("Gets the visible text content of a single element by CSS/XPath selector. Use ONLY when you already have the exact selector (e.g. from find_element). For getting text from multiple matching elements at once, use get_multiple_elements_text instead.")]
+    public string GetElementText(
+        [Description("Selector string. Interpreted per 'by'. CSS by default.")]
+        string selector,
+        [Description("Selector type: 'Css' (default) or 'Xpath'.")]
+        SelectorType by = SelectorType.Css)
+    {
+        try { return _session.GetElementText(selector, by); }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// セレクタ一致要素の属性値を取得
+    /// </summary>
+    /// <param name="selector">セレクタ文字列</param>
+    /// <param name="by">セレクタ種別（Css / Xpath）</param>
+    /// <param name="attribute">属性名</param>
+    /// <returns>属性値、またはエラー文字列</returns>
+    [McpServerTool(Name = "get_element_attribute"),
+     Description("Gets an attribute value from an element by CSS/XPath selector (e.g. 'href', 'value', 'class', 'disabled', 'data-*'). Use this to inspect link destinations, current input values, or element state without relying on get_page_source.")]
+    public string GetElementAttribute(
+        [Description("Selector string. Interpreted per 'by'. CSS by default.")]
+        string selector,
+        [Description("Attribute name to read (e.g. 'href', 'value', 'class').")]
+        string attribute,
+        [Description("Selector type: 'Css' (default) or 'Xpath'.")]
+        SelectorType by = SelectorType.Css)
+    {
+        try
+        {
+            var value = _session.GetElementAttribute(selector, by, attribute);
+            return value ?? "(null)";
+        }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// セレクタに一致する要素数を取得
+    /// </summary>
+    /// <param name="selector">セレクタ文字列</param>
+    /// <param name="by">セレクタ種別（Css / Xpath）</param>
+    /// <returns>一致件数、またはエラー文字列</returns>
+    [McpServerTool(Name = "count_elements"),
+     Description("Counts how many elements on the page match a CSS/XPath selector. Useful for checking whether a list has loaded, how many rows a table has, or whether a selector is ambiguous before calling click/input_text.")]
+    public string CountElements(
+        [Description("Selector string. Interpreted per 'by'. CSS by default.")]
+        string selector,
+        [Description("Selector type: 'Css' (default) or 'Xpath'.")]
+        SelectorType by = SelectorType.Css)
+    {
+        try { return _session.CountElements(selector, by).ToString(); }
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
+    }
+
+    /// <summary>
+    /// セレクタに一致するすべての要素の可視テキストを取得
+    /// </summary>
+    /// <param name="selector">セレクタ文字列</param>
+    /// <param name="by">セレクタ種別（Css / Xpath）</param>
+    /// <returns>各要素のテキスト（改行区切り）、またはエラー文字列</returns>
+    [McpServerTool(Name = "get_multiple_elements_text"),
+     Description("Gets the visible text of every element matching a CSS/XPath selector, one per line, in DOM order. Use this for lists, table cells, or repeated items (e.g. all '.product-name' elements) instead of calling get_element_text in a loop.")]
+    public string GetMultipleElementsText(
+        [Description("Selector string. Interpreted per 'by'. CSS by default.")]
+        string selector,
+        [Description("Selector type: 'Css' (default) or 'Xpath'.")]
+        SelectorType by = SelectorType.Css)
+    {
+        try
+        {
+            var texts = _session.GetMultipleElementsText(selector, by);
+            return texts.Count == 0 ? "(no matching elements)" : string.Join("\n", texts);
         }
         catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
     }
