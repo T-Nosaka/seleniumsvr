@@ -190,6 +190,7 @@ mcpb pack
     "seleniumsvr": {
       "type": "local",
       "command": [
+        "cmd.exe", "/c",
         "C:\\webdriver\\seleniumsvr.exe",
         "--webdriverinfo",
         "C:\\webdriver\\webdriverinfo.json"
