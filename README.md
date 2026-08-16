@@ -200,6 +200,11 @@ mcpb pack
   }
 }
 ```
+/etc/wsl.conf
+```
+[boot]
+command = echo ':WSLInterop:M::MZ::/init:' | tee /proc/sys/fs/binfmt_misc/register
+```
 
 ## Architecture
 
