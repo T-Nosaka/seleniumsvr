@@ -31,7 +31,7 @@ public sealed class ElementTool
     /// <param name="hint"></param>
     /// <returns></returns>
     [McpServerTool(Name = "get_hrefs"),
-     Description("Find links on the page whose text contains the hint. Returns each matching link as 'Link Text<TAB>URL'. Use this to discover navigation links before clicking. Example: get_hrefs('テレビ') returns all TV-related links with their URLs. Then use navigate(url) or find_and_click with the link text.")]
+     Description("Find links on the page whose text contains the hint. Returns each matching link as 'Link Text<TAB>URL'. Use this to discover navigation links before clicking. Example: get_hrefs('テレビ') returns all TV-related links with their URLs. Then use navigate(url) to open one directly, or pass the URL to click() as an [href] selector.")]
     public string GetHrefs( string hint )
     {
         try
@@ -78,192 +78,105 @@ public sealed class ElementTool
     }
 
     /// <summary>
-    /// ページ内の要素を自然言語で検索し、セレクタを見つける
+    /// ページ内の要素を自然言語で検索し、検証済みセレクタを返す
     /// </summary>
     /// <param name="query">探す要素の説明（例：「ログインボタン」「メールアドレス入力欄」）</param>
-    /// <returns>見つかった要素のセレクタ（複数）、または "not found"</returns>
+    /// <param name="maxResults">返す候補の最大件数</param>
+    /// <param name="includeFrames">iframe 内も走査するか</param>
+    /// <returns>候補一覧、または "not found"</returns>
     [McpServerTool(Name = "find_element"),
-     Description("Find elements on the page by natural language description. Search for buttons, links, inputs, images by what they do or what text they contain (e.g., 'Finance link', 'search button', 'email input'). Returns CSS selectors for matched elements. After finding, use click, input_text, or get_element_text with the returned selector. Better: use find_and_click or find_and_input for one-step operations.")]
+     Description("Find elements by text or description (e.g. 'Login button', 'email input', '検索'). Matches against visible text, aria-label, placeholder, title, alt, value, name, id and role, with full-width/half-width and case normalization. Returns ranked candidates whose selectors are VERIFIED in the browser - each one is guaranteed to match exactly one element, so it can be passed directly to click / input_text / get_element_text. Also searches inside iframes by default; if a hit is in a frame, the output tells you which switch_to_frame call to make first. When nothing matches, use list_interactive_elements to see what is actually on the page.")]
     public string FindElement(
-        [Description("Natural language description of what to find (e.g., 'Finance link', 'search button', 'email input field', 'Submit button').")]
-        string query)
+        [Description("Text or description of what to find (e.g. 'Login button', 'email input field', '検索').")]
+        string query,
+        [Description("Maximum number of candidates to return. Default: 10.")]
+        int maxResults = 10,
+        [Description("Also search inside iframes (recursively, cross-origin included). Default: true.")]
+        bool includeFrames = true)
     {
+        Logger.Log($"FindElement [{query}] [max={maxResults}] [frames={includeFrames}]", LogType.Operation);
+
         try
         {
-            var pageSource = _session.GetPageSource();
+            if (string.IsNullOrWhiteSpace(query))
+                return "ERROR: query is empty. Use list_interactive_elements to enumerate elements instead.";
 
-            // クエリに基づいて要素セレクタを見つける
-            var results = FindElementsByQuery(pageSource, query);
+            var hits = _session.ScanElements(query, Math.Max(1, maxResults), includeFrames, false);
+            if (hits.Count == 0)
+                return "not found. Try a shorter/partial query, or use list_interactive_elements to see what is on the page.";
 
-            if (results.Count == 0)
-                return "not found";
-
-            return string.Join("\n", results.Select((sel, i) => $"{i + 1}. {sel}"));
+            return FormatHits(hits);
         }
         catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
     }
 
-
     /// <summary>
-    /// クエリに基づいて要素セレクタを見つける
-    /// BrowserSessionの検索メソッドを試して、見つかったものを返す
+    /// ページ上の操作可能要素を一覧する（クエリ不要）
     /// </summary>
-    private List<string> FindElementsByQuery(string html, string query)
+    /// <param name="maxResults">返す件数の上限</param>
+    /// <param name="includeFrames">iframe 内も走査するか</param>
+    /// <returns>要素一覧</returns>
+    [McpServerTool(Name = "list_interactive_elements"),
+     Description("List the interactive elements on the page (links, buttons, inputs, selects, and ARIA widgets) with a VERIFIED selector for each, plus tag, type, label and state. Takes no query - use it when you do not yet know what the page offers, or when find_element returns nothing. This is a compact alternative to get_page_source: it gives you what you can actually click or type into, at a fraction of the size. Only visible elements are listed. Searches inside iframes by default and shows which switch_to_frame call each frame element needs.")]
+    public string ListInteractiveElements(
+        [Description("Maximum number of elements to return. Default: 40.")]
+        int maxResults = 40,
+        [Description("Also list elements inside iframes (recursively). Default: true.")]
+        bool includeFrames = true)
     {
-        var results = new List<string>();
+        Logger.Log($"ListInteractiveElements [max={maxResults}] [frames={includeFrames}]", LogType.Operation);
 
-        // 検索戦略を順番に試す
-        // 各戦略で見つかったら、その結果を返す
-
-        // 1. 部分的なリンクテキストマッチ
         try
         {
-            var selector = _session.FindPartialLinkText(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"a:contains('{query}')");
+            var hits = _session.ScanElements("", Math.Max(1, maxResults), includeFrames, true);
+            if (hits.Count == 0)
+                return "(no interactive elements found)";
+
+            return FormatHits(hits);
         }
-        catch (Exception) { /* 見つからない */ }
-
-        if (results.Count > 0) return results;
-
-        // 2. ID 属性で完全一致
-        try
-        {
-            var selector = _session.FindID(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"#{query}");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // 3. Name 属性で検索
-        try
-        {
-            var selector = _session.FindName(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"[name='{query}']");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // 4. Class 名で検索
-        try
-        {
-            var selector = _session.FindClassName(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($".{query}");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // 5. Button テキストで完全一致
-        try
-        {
-            var selector = _session.FindByButtonText(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"button:contains('{query}')");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // 6. Button テキストで部分一致
-        try
-        {
-            var selector = _session.FindByButtonTextPartial(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"button:contains('{query}')");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // 7. Placeholder で検索（input フィールド）
-        try
-        {
-            var selector = _session.FindByPlaceholder(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"input[placeholder*='{query}']");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // 8. Label テキストから関連フォーム要素を検索
-        try
-        {
-            var selector = _session.FindByLabelText(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"input[aria-label*='{query}']");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // 9. 任意のテキストマッチ（最後の手段）
-        try
-        {
-            var selector = _session.FindByText(query);
-            if (!string.IsNullOrEmpty(selector))
-                results.Add($"*:contains('{query}')");
-        }
-        catch { }
-
-        if (results.Count > 0) return results;
-
-        // すべて失敗した場合のフォールバック（正規表現ベース）
-        return FindElementsByQueryRegex(html, query);
+        catch (Exception ex) { return $"ERROR: {ex.GetType().Name}: {ex.Message}"; }
     }
 
     /// <summary>
-    /// 正規表現ベースのフォールバック検索
+    /// 走査結果を人間／LLMが読みやすい形に整形する。
+    /// フレーム内の要素はフレームごとにまとめ、切り替え手順を明示する。
     /// </summary>
-    private List<string> FindElementsByQueryRegex(string html, string query)
+    /// <param name="hits">走査結果</param>
+    /// <returns>整形済み文字列</returns>
+    private static string FormatHits(List<BrowserSession.ElementHit> hits)
     {
-        var results = new List<string>();
-        var lowerQuery = System.Text.RegularExpressions.Regex.Escape(query.ToLower());
+        var sb = new System.Text.StringBuilder();
+        var n = 0;
+        string? currentFrame = null;
 
-        // パターン1: id属性を持つ要素でテキストがマッチ
-        var idRegex = new System.Text.RegularExpressions.Regex(
-            $@"<([a-z]+)[^>]*\bid=[""']?([^""'\s>]+)[""']?[^>]*>([^<]*{lowerQuery}[^<]*)<",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var idMatches = idRegex.Matches(html);
-        foreach (System.Text.RegularExpressions.Match m in idMatches)
+        foreach (var h in hits.OrderBy(h => h.FramePath == "TOP" ? 0 : 1)
+                              .ThenBy(h => h.FramePath)
+                              .ThenByDescending(h => h.Score))
         {
-            if (m.Groups.Count > 2 && !string.IsNullOrEmpty(m.Groups[2].Value))
-                results.Add($"#{m.Groups[2].Value}");
+            if (h.FramePath != currentFrame)
+            {
+                currentFrame = h.FramePath;
+                if (sb.Length > 0) sb.Append('\n');
+                if (h.FramePath == "TOP")
+                {
+                    sb.Append("[TOP document]\n");
+                }
+                else
+                {
+                    sb.Append($"[FRAME: {h.FramePath}]\n")
+                      .Append($"  -> call {h.SwitchHint} first, then use the selectors below.\n")
+                      .Append("  -> call switch_to_default_content when done.\n");
+                }
+            }
+
+            n++;
+            var typePart = string.IsNullOrEmpty(h.Type) ? "" : $" type={h.Type}";
+            var labelPart = string.IsNullOrEmpty(h.Label) ? "" : $" \"{h.Label}\"";
+            sb.Append($"{n}. {h.Selector}  [{h.By}]  <{h.Tag}{typePart}>{labelPart}  ({h.State})\n");
         }
 
-        if (results.Count > 0) return results;
-
-        // パターン2: button/a/input タグのテキストまたは属性がマッチ
-        var textRegex = new System.Text.RegularExpressions.Regex(
-            $@"<(button|a|input)[^>]*>([^<]*{lowerQuery}[^<]*)<",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var textMatches = textRegex.Matches(html);
-        if (textMatches.Count > 0)
-        {
-            results.Add(textMatches[0].Groups[1].Value);
-            return results;
-        }
-
-        // パターン3: placeholder や value 属性がマッチ
-        var attrRegex = new System.Text.RegularExpressions.Regex(
-            $@"<input[^>]*(?:placeholder|value|name)[=""']([^""']*{lowerQuery}[^""']*)[""'][^>]*>",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var attrMatches = attrRegex.Matches(html);
-        if (attrMatches.Count > 0)
-        {
-            results.Add("input[type='text']");
-            return results;
-        }
-
-        return results; // 何も見つからない
+        return sb.ToString().TrimEnd();
     }
-
     /// <summary>
     /// セレクタ一致要素をクリック
     /// </summary>
@@ -271,7 +184,7 @@ public sealed class ElementTool
     /// <param name="by">セレクタ種別（Css / Xpath）</param>
     /// <returns>完了メッセージ、またはエラー文字列</returns>
     [McpServerTool(Name = "click"),
-     Description("Click an element by CSS/XPath selector. Use ONLY when you already have the exact selector. PREFER find_and_click() instead - it handles finding and clicking in one action. For example: instead of find_element('Finance') then click(selector), just use find_and_click('Finance'). This tool is for advanced cases with known selectors only.")]
+     Description("Click an element by CSS/XPath selector. Obtain the selector first with find_element, get_tree, get_hrefs, or get_page_source. Use 'interact' instead when you need a double-click, right-click, or hover.")]
     public string Click(
         [Description("Selector string. Interpreted per 'by'. CSS by default (e.g. '#search-button').")]
         string selector,
@@ -345,7 +258,7 @@ public sealed class ElementTool
     /// <param name="clear">入力前にフィールドをクリアするか</param>
     /// <returns>完了メッセージ、またはエラー文字列</returns>
     [McpServerTool(Name = "input_text"),
-     Description("Type text into an input/textarea by selector. Use ONLY when you already have the exact selector. PREFER find_and_input() instead - it handles finding and typing in one action. For example: instead of find_element('email') then input_text(selector, email), just use find_and_input('email', 'user@example.com'). This tool is for advanced cases with known selectors only.")]
+     Description("Type text into an input/textarea by selector. Obtain the selector first with find_element, get_tree, or get_page_source. Follow with press_key('Enter') to submit a form.")]
     public string InputText(
         [Description("Selector string. Interpreted per 'by'. CSS by default.")]
         string selector,

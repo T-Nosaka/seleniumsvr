@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
@@ -1057,6 +1057,359 @@ return JSON.stringify(out);") as string ?? "[]";
         }
     }
 
+    // ---------- 要素スキャン（find_element / list_interactive_elements 共通基盤） ----------
+
+    /// <summary>
+    /// 要素スキャン結果の1件分。生成したセレクタはブラウザ上で検証済み
+    /// （そのセレクタで引き直すと必ず1件だけ一致し、同一ノードである）。
+    /// </summary>
+    public sealed class ElementHit
+    {
+        /// <summary>検証済みセレクタ</summary>
+        public string Selector { get; set; } = "";
+        /// <summary>セレクタ種別（Css / Xpath）</summary>
+        public string By { get; set; } = "";
+        /// <summary>タグ名</summary>
+        public string Tag { get; set; } = "";
+        /// <summary>input の type 属性など</summary>
+        public string Type { get; set; } = "";
+        /// <summary>判別用ラベル（可視テキスト等）</summary>
+        public string Label { get; set; } = "";
+        /// <summary>visible / hidden / disabled などの状態</summary>
+        public string State { get; set; } = "";
+        /// <summary>マッチスコア</summary>
+        public int Score { get; set; }
+        /// <summary>所属フレームのパス（例: TOP &gt; iframe#app）</summary>
+        public string FramePath { get; set; } = "TOP";
+        /// <summary>そのフレームへ入る手順。TOP文書なら空文字列</summary>
+        public string SwitchHint { get; set; } = "";
+    }
+
+    /// <summary>
+    /// 要素走査＆セレクタ生成を行う JavaScript。
+    /// arguments[0]=検索クエリ（空文字列ならインベントリモード）
+    /// arguments[1]=操作可能要素のみに絞るか
+    /// arguments[2]=返却上限
+    /// 生成したセレクタは必ず querySelectorAll / document.evaluate で引き直して
+    /// 「1件だけ一致し同一ノード」であることを確認してから返す。
+    /// </summary>
+    private const string ElementScanJs = @"
+var q = arguments[0] || '';
+var interactiveOnly = !!arguments[1];
+var limit = arguments[2] || 20;
+
+function norm(s){
+  if(!s) return '';
+  s = String(s);
+  try { s = s.normalize('NFKC'); } catch(e){}
+  return s.toLowerCase().replace(/\s+/g,' ').trim();
+}
+var nq = norm(q);
+
+/* セレクタ組み立てで使う文字（C#の逐語文字列を汚さないため定数化） */
+var qt = String.fromCharCode(39);
+var chr61 = String.fromCharCode(61);
+
+var INTERACTIVE = 'a,button,input,select,textarea,summary,label,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=radio],[role=textbox],[role=combobox],[role=switch],[onclick],[tabindex],[contenteditable=true]';
+
+function isInteractive(el){ try { return el.matches(INTERACTIVE); } catch(e){ return false; } }
+
+function isVisible(el){
+  try {
+    if(!el.getClientRects || el.getClientRects().length === 0) return false;
+    var st = window.getComputedStyle(el);
+    if(!st) return false;
+    if(st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return false;
+    return true;
+  } catch(e){ return false; }
+}
+
+function ownText(el){
+  var t = '';
+  for(var i=0;i<el.childNodes.length;i++){
+    var n = el.childNodes[i];
+    if(n.nodeType === 3) t += n.nodeValue;
+  }
+  return t.replace(/\s+/g,' ').trim();
+}
+
+/* 自動生成っぽい id を弾く（例: _96bgwl4m2zh-input, :r3:, ember1234） */
+function looksGenerated(id){
+  if(!id) return true;
+  if(id.length > 40) return true;
+  if(/^[:_]/.test(id)) return true;
+  if(/^r[0-9a-z]{4,}$/i.test(id)) return true;
+  var segs = id.split(/[-_.:]/);
+  for(var i=0;i<segs.length;i++){
+    var s = segs[i];
+    if(s.length >= 8 && /[a-z]/i.test(s) && /\d/.test(s)) return true;
+    if(/\d{5,}/.test(s)) return true;
+  }
+  return false;
+}
+
+function cssEsc(v){
+  try { return CSS.escape(v); } catch(e){ return String(v); }
+}
+function attrEsc(v){ return String(v).replace(/(['\\])/g, '\\$1'); }
+
+function uniqCss(sel, el){
+  try { var n = document.querySelectorAll(sel); return n.length === 1 && n[0] === el; }
+  catch(e){ return false; }
+}
+function uniqXp(xp, el){
+  try {
+    /* 7 = ORDERED_NODE_SNAPSHOT_TYPE。9(FIRST_ORDERED_NODE)だと先頭しか見ず重複を検出できない */
+    var r = document.evaluate(xp, document, null, 7, null);
+    return r.snapshotLength === 1 && r.snapshotItem(0) === el;
+  }
+  catch(e){ return false; }
+}
+
+function xpathOf(el){
+  var parts = [], cur = el;
+  while(cur && cur.nodeType === 1){
+    var idx = 1, sib = cur.previousElementSibling;
+    while(sib){ if(sib.tagName === cur.tagName) idx++; sib = sib.previousElementSibling; }
+    parts.unshift(cur.tagName.toLowerCase() + '[' + idx + ']');
+    cur = cur.parentElement;
+  }
+  return '/' + parts.join('/');
+}
+
+/* 安定 id を持つ最近傍の祖先を起点にした相対 XPath。絶対パスより短く壊れにくい */
+function relXpathOf(el){
+  var parts = [], cur = el;
+  while(cur && cur.nodeType === 1){
+    var pid = cur.getAttribute('id');
+    if(pid && cur !== el && !looksGenerated(pid) && pid.indexOf(qt) < 0){
+      return '//*[@id=' + qt + pid + qt + ']/' + parts.join('/');
+    }
+    var idx = 1, sib = cur.previousElementSibling;
+    while(sib){ if(sib.tagName === cur.tagName) idx++; sib = sib.previousElementSibling; }
+    parts.unshift(cur.tagName.toLowerCase() + '[' + idx + ']');
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+/* 安定性の高い順にセレクタ候補を試し、検証を通った最初のものを返す */
+function buildSelector(el){
+  var tag = el.tagName.toLowerCase(), c, v;
+
+  var id = el.getAttribute('id');
+  if(id && !looksGenerated(id)){ c = '#' + cssEsc(id); if(uniqCss(c, el)) return {s:c, by:'Css'}; }
+
+  var tids = ['data-testid','data-test-id','data-test','data-cy','data-qa'];
+  for(var i=0;i<tids.length;i++){
+    v = el.getAttribute(tids[i]);
+    if(v){ c = '[' + tids[i] + chr61 + qt + attrEsc(v) + qt + ']'; if(uniqCss(c, el)) return {s:c, by:'Css'}; }
+  }
+
+  v = el.getAttribute('aria-label');
+  if(v){ c = tag + '[aria-label=' + qt + attrEsc(v) + qt + ']'; if(uniqCss(c, el)) return {s:c, by:'Css'}; }
+
+  v = el.getAttribute('name');
+  if(v){ c = tag + '[name=' + qt + attrEsc(v) + qt + ']'; if(uniqCss(c, el)) return {s:c, by:'Css'}; }
+
+  v = el.getAttribute('placeholder');
+  if(v){ c = tag + '[placeholder=' + qt + attrEsc(v) + qt + ']'; if(uniqCss(c, el)) return {s:c, by:'Css'}; }
+
+  if(tag === 'a'){
+    v = el.getAttribute('href');
+    if(v && v.length <= 120){
+      c = 'a[href=' + qt + attrEsc(v) + qt + ']';
+      if(uniqCss(c, el)) return {s:c, by:'Css'};
+    }
+  }
+
+  /* まず直下テキストで試す。子孫に件数など可変の文言があっても巻き込まない */
+  var ot = ownText(el);
+  if(ot && ot.length <= 40 && ot.indexOf(qt) < 0){
+    var xp0 = '//' + tag + '[normalize-space(text())=' + qt + ot + qt + ']';
+    if(uniqXp(xp0, el)) return {s:xp0, by:'Xpath'};
+  }
+
+  /* 次に全テキスト。述語が normalize-space() なので比較元も全テキストで揃える */
+  var ft = (el.textContent || '').replace(/\s+/g,' ').trim();
+  if(ft && ft.length <= 40 && ft.indexOf(qt) < 0){
+    var xp = '//' + tag + '[normalize-space()=' + qt + ft + qt + ']';
+    if(uniqXp(xp, el)) return {s:xp, by:'Xpath'};
+  }
+
+  if(id){ c = '#' + cssEsc(id); if(uniqCss(c, el)) return {s:c, by:'Css'}; }
+
+  var rel = relXpathOf(el);
+  if(rel && uniqXp(rel, el)) return {s:rel, by:'Xpath'};
+
+  var xp2 = xpathOf(el);
+  if(uniqXp(xp2, el)) return {s:xp2, by:'Xpath'};
+
+  return null;
+}
+
+function scoreEl(el){
+  var fields = [];
+  function add(v, w){ if(v){ var n = norm(v); if(n) fields.push([n, w]); } }
+  add(ownText(el), 1.0);
+  add(el.getAttribute('aria-label'), 1.0);
+  add(el.getAttribute('placeholder'), 0.95);
+  add(el.getAttribute('title'), 0.9);
+  add(el.getAttribute('alt'), 0.9);
+  add(el.getAttribute('value'), 0.85);
+  add(el.getAttribute('name'), 0.7);
+  add(el.getAttribute('id'), 0.6);
+  add(el.getAttribute('role'), 0.5);
+  var tc = (el.textContent || '').replace(/\s+/g,' ').trim();
+  if(tc && tc.length <= 80) add(tc, 0.8);
+
+  var best = 0;
+  for(var i=0;i<fields.length;i++){
+    var fv = fields[i][0], fw = fields[i][1], sc = 0;
+    if(fv === nq) sc = 100;
+    else if(fv.indexOf(nq) === 0) sc = 80;
+    else if(fv.indexOf(nq) >= 0) sc = 60;
+    else continue;
+    sc = sc * fw - Math.min(20, Math.max(0, fv.length - nq.length) / 5);
+    if(sc > best) best = sc;
+  }
+  return best;
+}
+
+var pool = interactiveOnly ? document.querySelectorAll(INTERACTIVE) : document.querySelectorAll('*');
+var SKIP = {script:1, style:1, meta:1, link:1, head:1, html:1, body:1, noscript:1, br:1, iframe:1, frame:1};
+var cands = [];
+for(var i=0;i<pool.length;i++){
+  var el = pool[i];
+  var tg = el.tagName.toLowerCase();
+  if(SKIP[tg]) continue;
+  var vis = isVisible(el);
+  var inter = isInteractive(el);
+  var sc;
+  if(nq === ''){
+    if(!vis) continue;
+    sc = inter ? 10 : 0;
+  } else {
+    sc = scoreEl(el);
+    if(sc <= 0) continue;
+    if(inter) sc += 40; else sc -= 20;
+    sc += vis ? 10 : -30;
+    try { if(el.disabled) sc -= 10; } catch(e){}
+    if(!inter && el.children.length > 3) sc -= 25;
+  }
+  cands.push([el, sc, vis, inter]);
+}
+cands.sort(function(a,b){ return b[1] - a[1]; });
+
+var res = [];
+for(var j=0;j<cands.length && res.length<limit;j++){
+  var e = cands[j][0];
+  var sel = buildSelector(e);
+  if(!sel) continue;
+  var lab = ownText(e) || e.getAttribute('aria-label') || e.getAttribute('placeholder')
+            || e.getAttribute('value') || e.getAttribute('title') || e.getAttribute('alt')
+            || (e.textContent || '').replace(/\s+/g,' ').trim();
+  lab = (lab || '').replace(/\s+/g,' ').trim();
+  if(lab.length > 60) lab = lab.substring(0,60) + '...';
+  var st = [cands[j][2] ? 'visible' : 'hidden'];
+  try { if(e.disabled) st.push('disabled'); } catch(ex){}
+  if(!cands[j][3]) st.push('non-interactive');
+  res.push({
+    Selector: sel.s, By: sel.by, Tag: e.tagName.toLowerCase(),
+    Type: e.getAttribute('type') || '', Label: lab,
+    State: st.join(','), Score: Math.round(cands[j][1])
+  });
+}
+return JSON.stringify(res);
+";
+
+    /// <summary>
+    /// 要素を走査して、検証済みセレクタ付きの候補一覧を返す。
+    /// </summary>
+    /// <param name="query">検索クエリ。空文字列ならインベントリモード（操作可能要素の一覧）</param>
+    /// <param name="maxResults">返却上限</param>
+    /// <param name="includeFrames">iframe 内も再帰的に走査するか</param>
+    /// <param name="interactiveOnly">操作可能要素のみに絞るか</param>
+    /// <returns>スコア降順の候補リスト</returns>
+    public List<ElementHit> ScanElements(string? query, int maxResults, bool includeFrames, bool interactiveOnly)
+    {
+        lock (_gate)
+        {
+            RequireStartedLocked();
+            var acc = new List<ElementHit>();
+            _driver!.SwitchTo().DefaultContent();
+            try
+            {
+                ScanFrameLocked(query ?? "", maxResults, interactiveOnly, "TOP", "", includeFrames ? 5 : 0, acc);
+            }
+            finally
+            {
+                try { _driver.SwitchTo().DefaultContent(); } catch { }
+            }
+            return acc.OrderByDescending(h => h.Score).Take(maxResults).ToList();
+        }
+    }
+
+    /// <summary>
+    /// ScanElements の再帰本体（ロック取得済み前提）。
+    /// GetAllText と同じく WebDriver レベルでフレームを切り替えるため、
+    /// クロスオリジン iframe の内部も走査できる。
+    /// </summary>
+    private void ScanFrameLocked(string query, int maxResults, bool interactiveOnly,
+                                 string path, string switchHint, int depth, List<ElementHit> acc)
+    {
+        var js = (IJavaScriptExecutor)_driver!;
+
+        try
+        {
+            var json = js.ExecuteScript(ElementScanJs, query, interactiveOnly, maxResults) as string ?? "[]";
+            var hits = JsonConvert.DeserializeObject<List<ElementHit>>(json) ?? new List<ElementHit>();
+            foreach (var h in hits)
+            {
+                h.FramePath = path;
+                h.SwitchHint = switchHint;
+                acc.Add(h);
+            }
+        }
+        catch { /* このフレームは走査不能。スキップして続行 */ }
+
+        if (depth <= 0) return;
+
+        int frameCount;
+        try { frameCount = Convert.ToInt32(js.ExecuteScript("return window.frames.length;")); }
+        catch { frameCount = 0; }
+        if (frameCount == 0) return;
+
+        var labels = new List<string>();
+        try
+        {
+            var labelJson = js.ExecuteScript(@"
+var fr = document.querySelectorAll('iframe, frame');
+var out = [];
+for (var i = 0; i < fr.length; i++) {
+  var f = fr[i];
+  out.push(f.id ? ('#'+f.id) : (f.name ? ('name='+f.name) : ''));
+}
+return JSON.stringify(out);") as string ?? "[]";
+            labels = JsonConvert.DeserializeObject<List<string>>(labelJson) ?? new List<string>();
+        }
+        catch { }
+
+        for (int i = 0; i < frameCount; i++)
+        {
+            var lbl = (i < labels.Count && !string.IsNullOrEmpty(labels[i])) ? labels[i] : $"[{i}]";
+            var childPath = $"{path} > iframe{lbl}";
+            var childHint = string.IsNullOrEmpty(switchHint)
+                ? $"switch_to_frame('{i}')"
+                : $"{switchHint} -> switch_to_frame('{i}')";
+
+            try { _driver!.SwitchTo().Frame(i); }
+            catch { continue; }
+
+            try { ScanFrameLocked(query, maxResults, interactiveOnly, childPath, childHint, depth - 1, acc); }
+            finally { try { _driver!.SwitchTo().ParentFrame(); } catch { } }
+        }
+    }
     // ---------- ダウンロード ----------
 
     /// <summary>
