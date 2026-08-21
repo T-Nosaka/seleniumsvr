@@ -11,7 +11,10 @@ Windows / macOS / Linux のクロスプラットフォームに対応してい�
 | **Lifecycle** | `prepare_browser` `release_browser` `session_status` `list_browser` `close_browser` |
 | **Navigation** | `navigate` `go_back` `go_forward` `reload` |
 | **Page Info** | `get_title` `get_current_url` `get_page_text` `get_page_source` `screenshot` |
-| **Element** | `find_element` `click` `input_text` `get_hrefs` `get_tree` `list_section` `wait_for_element` |
+| **Discovery** | `find_element` `list_interactive_elements` `get_hrefs` `get_tree` `list_section` |
+| **Element** | `click` `interact` `input_text` `press_key` `get_element_text` `get_element_attribute` `get_multiple_elements_text` `count_elements` `wait_for_element` |
+| **Frame** | `list_frames` `switch_to_frame` `switch_to_parent_frame` `switch_to_default_content` `get_all_text` |
+| **Dialog** | `alert` |
 | **Download** | `set_download_dir` `get_download_dir` `list_downloads` `wait_for_download` |
 | **Window/Tab** | `list_windows` `switch_window` `close_window` |
 | **Script** | `execute_script` |
@@ -227,6 +230,58 @@ command = echo ':WSLInterop:M::MZ::/init:' | tee /proc/sys/fs/binfmt_misc/regist
 - **BrowserSession**: WebDriver のライフサイクル管理（遅延初期化・排他制御・自動復旧・自動アタッチ・プロファイル排他ロック）
 - **MCP Tools**: 属性 `[McpServerTool]` で自動検出され、各操作を公開
 - **Logger**: stdout は MCP JSON-RPC 専用。ログはファイル出力
+
+## Finding Elements（要素の探し方）
+
+複雑なページでは、`get_page_source` で HTML を丸ごと読むより、以下の 2 ツールを使うほうが確実かつ軽量です。
+
+| ツール | 使いどころ |
+|---|---|
+| `find_element(query)` | 探すものが決まっている。テキストや説明で検索する |
+| `list_interactive_elements()` | ページに何があるか分からない。操作可能な要素を一覧する |
+
+### 検証済みセレクタ（Verified Selectors）
+
+両ツールが返すセレクタは、**ブラウザ上で引き直して「ちょうど 1 件だけ一致し、かつ同一ノードである」ことを確認したものだけ**です。
+検証を通らなかった候補は捨てられ、より確実な候補へフォールバックします。
+そのため、返ってきた文字列は加工せずそのまま `click` / `input_text` / `get_element_text` に渡せます。
+
+セレクタは安定性の高い順に試されます。
+
+```
+安定 id → data-testid 系 → aria-label → name → placeholder
+       → a[href] → 直下テキストの XPath → 全テキストの XPath
+       → 安定 id を持つ祖先からの相対 XPath → 絶対 XPath
+```
+
+`_96bgwl4m2zh-input` のような**自動生成 id は検出して除外**し、次の候補へ回します（他に手段がない場合のみ最後に使用）。
+また直下テキストを優先するため、`ノートパソコン(126,149)` のように**件数など変動する子孫テキストをセレクタに巻き込みません**。
+
+### マッチング
+
+`find_element` は可視テキスト・`aria-label`・`placeholder`・`title`・`alt`・`value`・`name`・`id`・`role` を対象に、
+全角半角（NFKC）と大文字小文字を正規化して部分一致で検索します。
+結果はスコア順で、操作可能な要素（リンク・ボタン・入力欄など）が上位に来ます。
+
+出力には判別材料としてタグ・type・ラベル・状態（`visible` / `hidden` / `disabled` / `non-interactive`）が付きます。
+
+```
+1. //button[normalize-space()='検索']  [Xpath]  <button type=submit> "検索"  (visible)
+2. input[aria-label='検索したいキーワードを入力してください']  [Css]  <input type=search> "..."  (visible)
+```
+
+### iframe
+
+両ツールとも**既定で iframe 内を再帰的に探索します**（`includeFrames: false` で無効化可能）。
+WebDriver レベルでフレームを切り替えるため、クロスオリジンの iframe も対象になります。
+フレーム内で見つかった要素には、そこへ入るための手順が添えられます。
+
+```
+[FRAME: TOP > iframe#app-container]
+  -> call switch_to_frame('0') first, then use the selectors below.
+  -> call switch_to_default_content when done.
+1. button[aria-label='送信']  [Css]  <button> "送信"  (visible)
+```
 
 ## Key Behaviors
 
